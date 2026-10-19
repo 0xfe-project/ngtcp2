@@ -37,3 +37,7 @@ test-driver
 
 # idea settings
 .idea
+
+# our mjs build (no cmake)
+/build/
+/node_modules/
