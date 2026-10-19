@@ -36,24 +36,39 @@ export function sanitizerFlags({ asan, tsan }) {
  *   lib                 internal headers (ngtcp2_conn.h and friends)
  *   tests/munit         munit.h, tests only
  */
-export function includeFlags({ root, buildDir, tests = false }) {
+export function includeFlags({ root, buildDir, tests = false, ours = false }) {
     const dirs = [
         path.join(buildDir, "gen", "include"),
         path.join(root, "lib", "includes"),
         path.join(root, "lib"),
     ];
     if (tests) dirs.push(path.join(root, "tests", "munit"));
+    if (ours) {
+        /*
+         * cvmcrypt is an external dependency, not vendored: the fork links
+         * against whatever checkout the caller points at. CVMCRYPT_DIR makes
+         * "the sibling checkout" the default without hard-coding a path in
+         * the build.
+         */
+        const cvmcrypt = path.resolve(process.env.CVMCRYPT_DIR || path.join(root, "..", "cvmcrypt"));
+        dirs.push(path.join(cvmcrypt, "include"), path.join(cvmcrypt, "src"));
+        /* The crypto API header lives under crypto/, not lib/. */
+        dirs.push(path.join(root, "crypto", "includes"), path.join(root, "crypto"));
+        /* cvm's rt/ supplies base/types.h and the rt_* ABI. */
+        dirs.push(path.join(cvmcrypt, "vendor", "cvm", "rt"));
+    }
     return dirs.flatMap((d) => ["-I", d]);
 }
 
 export function flagsFor({ tier, opts, root, buildDir, tests = false, extra = [] }) {
+    const ours = tier === "ours";
     return [
         STD,
         ...(tier === "ours" ? OURS_WARN : UPSTREAM_WARN),
         "-DNGTCP2_STATICLIB",
         ...(opts.release ? RELEASE_FLAGS : DEBUG_FLAGS),
         ...sanitizerFlags(opts),
-        ...includeFlags({ root, buildDir, tests }),
+        ...includeFlags({ root, buildDir, tests, ours }),
         ...extra,
     ];
 }

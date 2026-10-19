@@ -89,7 +89,7 @@ function buildCrypto(toolchain) {
     return objs;
 }
 
-function buildTests(toolchain, libArchive, cryptoObjs) {
+function buildTests(toolchain, libArchive) {
     const binDir = path.join(BUILD, "bin");
     rmrf(binDir);
     mkdirp(binDir);
@@ -113,7 +113,12 @@ function buildTests(toolchain, libArchive, cryptoObjs) {
 
     const bin = path.join(binDir, "ngtcp2-tests");
     link({
-        objs: [...objs, ...cryptoObjs],
+        /*
+         * Upstream tests test lib/, and nothing else. They must not link
+         * crypto/cvmcrypt: that object pulls in the whole of cvmcrypt, which
+         * lives in another checkout. The backend gets its own binary.
+         */
+        objs,
         out: bin,
         toolchain,
         libs: [libArchive],
@@ -148,13 +153,13 @@ function main() {
     const { version } = ensureVersionHeader({ root: ROOT, buildDir: BUILD, ui });
 
     const libArchive = opts.lib ? buildLib(toolchain) : null;
-    const cryptoObjs = opts.crypto ? buildCrypto(toolchain) : [];
+    if (opts.crypto) buildCrypto(toolchain);
 
     if (opts.tests) {
         if (!libArchive) {
             ui.fatal("--tests needs --lib (the archive must exist first)");
         }
-        buildTests(toolchain, libArchive, cryptoObjs);
+        buildTests(toolchain, libArchive);
     }
 
     ui.log(`done (ngtcp2 ${version})`);
