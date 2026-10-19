@@ -79,7 +79,9 @@ function buildLib(toolchain) {
 
 function buildCrypto(toolchain) {
     const dir = path.join(ROOT, "crypto", "cvmcrypt");
-    const srcs = collect(dir, [".c"]);
+    /* Exclude the test translation unit: it needs munit and is built and run
+     * by scripts/crypto-test.mjs instead. */
+    const srcs = collect(dir, [".c"]).filter((f) => !f.endsWith("_test.c"));
     if (srcs.length === 0) {
         ui.log("crypto: no sources yet (crypto/cvmcrypt/)");
         return [];

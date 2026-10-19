@@ -41,6 +41,7 @@
 #include <cvmcrypt/cvmcrypt.h>
 
 #include "tls/tls.h"
+#include "tls/tls_internal.h"
 
 #include "ngtcp2_macro.h"
 #include "shared.h"
@@ -413,37 +414,125 @@ size_t ngtcp2_crypto_cvmcrypt_from_ngtcp2_encryption_level(
 int ngtcp2_crypto_read_write_crypto_data(ngtcp2_conn *conn,
                                          ngtcp2_encryption_level encryption_level,
                                          const uint8_t *data, size_t datalen) {
-    (void)conn;
-    (void)encryption_level;
-    (void)data;
-    (void)datalen;
+    CvmTls *tls = (CvmTls *)ngtcp2_conn_get_tls_native_handle2(conn);
+    size_t const epoch =
+        ngtcp2_crypto_cvmcrypt_from_ngtcp2_encryption_level(encryption_level);
+    size_t epoch_offsets[5] = {0};
+    CvmTlsBuf sendbuf;
+    int rv;
+
+    if (tls == NULL) {
+        return NGTCP2_ERR_CALLBACK_FAILURE;
+    }
+
+    /* TLS tells us which level the next CRYPTO data belongs to; if ngtcp2
+     * disagrees, the handshake would be fed out of order. */
+    if (epoch != cvm_tls_get_read_epoch(tls)) {
+        return NGTCP2_ERR_CALLBACK_FAILURE;
+    }
+
+    cvm_tls_buf_init(&sendbuf, NULL, 0);
+
+    rv = cvm_tls_handle_message(tls, &sendbuf, epoch_offsets, epoch, data, datalen, NULL);
+    if (rv != 0 && rv != TLS_ERROR_IN_PROGRESS) {
+        if ((rv & TLS_ERROR_CLASS_EXTERNAL) == TLS_ERROR_CLASS_ALERT) {
+            ngtcp2_conn_set_tls_alert(conn, (uint8_t)(rv & 0xff));
+        }
+        cvm_tls_buf_dispose(&sendbuf);
+        return NGTCP2_ERR_CALLBACK_FAILURE;
+    }
 
     /*
-     * Blocked on cvmcrypt: cvm_tls_handle_message() — the record-less
-     * handshake entry point QUIC needs — is still a stub returning
-     * TLS_ERROR_NOT_AVAILABLE. Wiring this without it would mean inventing a
-     * TLS state machine here, in a file that has no business owning one.
-     *
-     * When that lands, this function is: check the epoch against
-     * cvm_tls_get_read_epoch(), call cvm_tls_handle_message() with
-     * epoch_offsets[5], then hand each non-empty epoch slice to
-     * ngtcp2_conn_submit_crypto_data().
+     * epoch_offsets[i] is the end of the bytes for epoch i-1, so each epoch's
+     * slice is [offsets[i], offsets[i+1]). Level 1 (0-RTT) is never produced
+     * by this backend.
      */
-    return NGTCP2_ERR_CALLBACK_FAILURE;
+    for (size_t i = 0; i < 4; ++i) {
+        size_t const len = epoch_offsets[i + 1] - epoch_offsets[i];
+        if (len == 0) {
+            continue;
+        }
+        if (ngtcp2_conn_submit_crypto_data(
+                conn, ngtcp2_crypto_cvmcrypt_from_epoch(i),
+                sendbuf.base + epoch_offsets[i], len) != 0) {
+            cvm_tls_buf_dispose(&sendbuf);
+            return NGTCP2_ERR_CALLBACK_FAILURE;
+        }
+    }
+
+    if (rv == 0) {
+        ngtcp2_conn_tls_handshake_completed(conn);
+    }
+
+    cvm_tls_buf_dispose(&sendbuf);
+    return 0;
 }
 
 int ngtcp2_crypto_set_local_transport_params(void *tls, const uint8_t *buf,
                                              size_t len) {
-    (void)tls;
-    (void)buf;
-    (void)len;
-    /* Same blocker: the QUIC transport-parameters extension is carried by the
-     * TLS layer, which does not implement it yet. */
-    return -1;
+    return cvm_tls_quic_set_local_transport_params((CvmTls *)tls, buf, len) == 0 ? 0 : -1;
 }
 
 int ngtcp2_crypto_set_remote_transport_params(ngtcp2_conn *conn, void *tls) {
-    (void)conn;
-    (void)tls;
-    return -1;
+    CvmTlsVec params = cvm_tls_quic_remote_transport_params((CvmTls const *)tls);
+
+    if (params.base == NULL || params.len == 0) {
+        return -1;
+    }
+    if (ngtcp2_conn_decode_and_set_remote_transport_params(conn, params.base,
+                                                           params.len) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* traffic keys                                                         */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The hook cvmcrypt calls once per direction per level, the moment the
+ * secret exists. ngtcp2 derives packet protection from it with its own
+ * labels; nothing here interprets the secret.
+ */
+static int update_traffic_key_cb(struct CvmTlsTrafficKey *self, CvmTls *tls, bool is_enc,
+                                 u32 epoch, u8 const *secret, usize secret_len) {
+    ngtcp2_crypto_conn_ref *conn_ref = cvm_tls_get_app_data(tls);
+    ngtcp2_conn *conn;
+    ngtcp2_encryption_level level;
+    int rv;
+
+    (void)self;
+
+    if (conn_ref == NULL || conn_ref->get_conn == NULL) {
+        return -1;
+    }
+    conn = conn_ref->get_conn(conn_ref);
+    if (conn == NULL) {
+        return -1;
+    }
+
+    level = ngtcp2_crypto_cvmcrypt_from_epoch(epoch);
+
+    if (is_enc) {
+        rv = ngtcp2_crypto_derive_and_install_tx_key(conn, NULL, NULL, NULL, level, secret,
+                                                     secret_len);
+    } else {
+        rv = ngtcp2_crypto_derive_and_install_rx_key(conn, NULL, NULL, NULL, level, secret,
+                                                     secret_len);
+    }
+
+    return rv == 0 ? 0 : -1;
+}
+
+static CvmTlsTrafficKey update_traffic_key = {update_traffic_key_cb};
+
+int ngtcp2_crypto_cvmcrypt_configure_client_context(CvmTlsContext *ctx) {
+    ctx->update_traffic_key = &update_traffic_key;
+    return 0;
+}
+
+int ngtcp2_crypto_cvmcrypt_configure_server_context(CvmTlsContext *ctx) {
+    ctx->update_traffic_key = &update_traffic_key;
+    return 0;
 }

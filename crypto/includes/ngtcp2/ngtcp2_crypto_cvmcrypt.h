@@ -51,6 +51,16 @@ ngtcp2_crypto_cvmcrypt_from_epoch(size_t epoch);
 NGTCP2_EXTERN size_t ngtcp2_crypto_cvmcrypt_from_ngtcp2_encryption_level(
     ngtcp2_encryption_level level);
 
+/*
+ * Wire cvmcrypt's traffic key callback into a TLS context. Without this the
+ * handshake completes and no keys ever reach ngtcp2.
+ */
+struct CvmTlsContext;
+NGTCP2_EXTERN int
+ngtcp2_crypto_cvmcrypt_configure_client_context(struct CvmTlsContext *ctx);
+NGTCP2_EXTERN int
+ngtcp2_crypto_cvmcrypt_configure_server_context(struct CvmTlsContext *ctx);
+
 #ifdef __cplusplus
 }
 #endif
