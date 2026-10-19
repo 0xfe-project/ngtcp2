@@ -34,6 +34,7 @@
 #include <string.h>
 
 #include <ngtcp2/ngtcp2_crypto.h>
+#include <ngtcp2/ngtcp2_crypto_cvmcrypt.h>
 
 #include "rt.h"
 
@@ -66,6 +67,12 @@ ngtcp2_crypto_aead *ngtcp2_crypto_aead_init(ngtcp2_crypto_aead *aead,
     aead->max_overhead =
         (size_t)cvmcrypt_aead_tag_size((CvmcryptAeadAlg const *)aead_native_handle);
     return aead;
+}
+
+ngtcp2_crypto_cipher *ngtcp2_crypto_cipher_init(ngtcp2_crypto_cipher *cipher,
+                                               void *cipher_native_handle) {
+    cipher->native_handle = cipher_native_handle;
+    return cipher;
 }
 
 ngtcp2_crypto_aead *ngtcp2_crypto_aead_aes_128_gcm(ngtcp2_crypto_aead *aead) {
