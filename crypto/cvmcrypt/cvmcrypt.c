@@ -123,6 +123,9 @@ static int suite_to_ctx(ngtcp2_crypto_ctx *ctx, CvmTlsCipherSuite const *suite) 
         return -1;
     }
 
+    /* AEAD usage limits (RFC 9001 §6.6). Leaving these at zero makes ngtcp2
+     * believe the limit is already reached and refuse to send: the first
+     * 1-RTT packet fails with NGTCP2_ERR_AEAD_LIMIT_REACHED. */
     switch (suite->id) {
     case 0x1301: /* TLS_AES_128_GCM_SHA256 */
         ngtcp2_crypto_aead_init(&ctx->aead, (void *)&cvmcrypt_aead_aes128gcm);
@@ -138,13 +141,17 @@ static int suite_to_ctx(ngtcp2_crypto_ctx *ctx, CvmTlsCipherSuite const *suite) 
         ngtcp2_crypto_aead_init(&ctx->aead, (void *)&cvmcrypt_aead_chacha20poly1305);
         ctx->md.native_handle = (void *)&cvmcrypt_md_sha256;
         ctx->hp.native_handle = (void *)&cvmcrypt_cipher_chacha20;
-        break;
+        ctx->max_encryption = NGTCP2_CRYPTO_MAX_ENCRYPTION_CHACHA20_POLY1305;
+        ctx->max_decryption_failure =
+            NGTCP2_CRYPTO_MAX_DECRYPTION_FAILURE_CHACHA20_POLY1305;
+        return 0;
     default:
         return -1;
     }
 
-    ctx->max_encryption = 0;
-    ctx->max_decryption_failure = 0;
+    /* The AES cases fall through to here. */
+    ctx->max_encryption = NGTCP2_CRYPTO_MAX_ENCRYPTION_AES_GCM;
+    ctx->max_decryption_failure = NGTCP2_CRYPTO_MAX_DECRYPTION_FAILURE_AES_GCM;
     return 0;
 }
 

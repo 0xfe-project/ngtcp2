@@ -14,6 +14,7 @@
         "test:release": "node scripts/build.mjs --lib --tests --release && node scripts/run-tests.mjs",
         "test:asan": "node scripts/build.mjs --lib --tests --asan && node scripts/run-tests.mjs",
         "test:tsan": "node scripts/build.mjs --lib --tests --tsan && node scripts/run-tests.mjs",
-        "crypto-test": "node scripts/build.mjs --lib && node scripts/crypto-test.mjs"
+        "crypto-test": "node scripts/build.mjs --lib && node scripts/crypto-test.mjs",
+        "quic-interop": "node scripts/build.mjs --lib && node scripts/quic-interop.mjs"
     }
 }
