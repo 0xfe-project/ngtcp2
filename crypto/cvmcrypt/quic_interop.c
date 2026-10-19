@@ -81,6 +81,8 @@ struct client {
     ngtcp2_conn *conn;
     CvmTls *tls;
     int handshake_done;
+    int64_t last_us;
+    int64_t t_start_us;
     int64_t stream_id;
     /* The echo carries the 4-byte length prefix too. */
     uint8_t echo[4 + PAYLOAD_LEN];
@@ -97,7 +99,13 @@ static ngtcp2_conn *get_conn(ngtcp2_crypto_conn_ref *conn_ref) {
 static int handshake_completed_cb(ngtcp2_conn *conn, void *user_data) {
     struct client *c = user_data;
     (void)conn;
-    printf("[client] handshake completed\n");
+    {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        int64_t const now = (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+        c->last_us = now - c->t_start_us;
+        printf("[client] handshake %lld us\n", (long long)c->last_us);
+    }
     c->handshake_done = 1;
     c->stream_id = 0;
     return 0;
@@ -279,6 +287,11 @@ int main(int argc, char **argv) {
     ngtcp2_conn_set_tls_native_handle(g_client.conn, tls);
 
     /* --- drive -------------------------------------------------------- */
+    {
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        g_client.t_start_us = (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+    }
     int64_t const deadline = now_ms() + HANDSHAKE_TIMEOUT_MS;
     int sent_request = 0;
     uint8_t pkt[1500];
