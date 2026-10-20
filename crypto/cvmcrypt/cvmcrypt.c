@@ -442,7 +442,11 @@ int ngtcp2_crypto_read_write_crypto_data(ngtcp2_conn *conn,
 
     rv = cvm_tls_handle_message(tls, &sendbuf, epoch_offsets, epoch, data, datalen, NULL);
     if (rv != 0 && rv != TLS_ERROR_IN_PROGRESS) {
-        if ((rv & TLS_ERROR_CLASS_EXTERNAL) == TLS_ERROR_CLASS_ALERT) {
+        /* Mask with the alert class itself. Masking with the *external* class
+         * and comparing to the alert class only worked while the alert class
+         * was zero — which was exactly the bug that made close_notify
+         * indistinguishable from success. */
+        if ((rv & TLS_ERROR_CLASS_ALERT) == TLS_ERROR_CLASS_ALERT) {
             ngtcp2_conn_set_tls_alert(conn, (uint8_t)(rv & 0xff));
         }
         cvm_tls_buf_dispose(&sendbuf);
